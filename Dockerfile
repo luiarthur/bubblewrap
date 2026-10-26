@@ -1,4 +1,3 @@
-
 ARG ALPINE_VERSION=3.23
 
 FROM alpine:${ALPINE_VERSION} AS builder
