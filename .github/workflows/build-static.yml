@@ -14,55 +14,63 @@ permissions:
 jobs:
   build:
     name: Build static bwrap for ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: alpine:3.23
+    defaults:
+      run:
+        shell: sh
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x86_64
-            platform: linux/amd64
+            runner: ubuntu-latest
           - arch: aarch64
-            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
-      - name: Check out
-        uses: actions/checkout@v7
+      - name: Install dependencies
+        run: |
+          apk add --no-cache \
+            build-base linux-headers python3 meson ninja \
+            pkgconf git libcap-dev libcap-static github-cli ca-certificates
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Check out
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.extraheader=AUTHORIZATION: basic $AUTH" \
+            fetch --depth=1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
 
       - name: Build static bwrap
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
+          meson setup build \
+            --buildtype=release \
+            -Dprefer_static=true \
+            -Dc_link_args=-static \
+            -Dselinux=disabled \
+            -Dman=disabled \
+            -Dbash_completion=disabled \
+            -Dzsh_completion=disabled \
+            -Dtests=false
+          meson compile -C build
           mkdir -p dist
-          docker run --rm \
-            --platform "${{ matrix.platform }}" \
-            -v "$GITHUB_WORKSPACE:/src" \
-            -w /src \
-            alpine:3.23 sh -ec '
-              apk add --no-cache \
-                build-base linux-headers python3 meson ninja \
-                pkgconf git libcap-dev libcap-static
-
-              meson setup build \
-                --buildtype=release \
-                -Dprefer_static=true \
-                -Dc_link_args=-static \
-                -Dselinux=disabled \
-                -Dman=disabled \
-                -Dbash_completion=disabled \
-                -Dzsh_completion=disabled \
-                -Dtests=false
-
-              meson compile -C build
-              install -m 755 build/bwrap "dist/bwrap-${{ matrix.arch }}"
-            '
+          install -m 755 build/bwrap "dist/bwrap-$ARCH"
 
       - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ github.event.release.tag_name || github.ref_name }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          RELEASE="${{ github.event.release.tag_name || github.ref_name }}"
-          if gh release view "$RELEASE" --json id >/dev/null 2>&1; then
-            gh release upload "$RELEASE" dist/bwrap-${{ matrix.arch }} --clobber
-          else
-            gh release create "$RELEASE" dist/bwrap-${{ matrix.arch }} --generate-notes --title "$RELEASE"
+          if ! gh release view "$RELEASE" --json id >/dev/null 2>&1; then
+            gh release create "$RELEASE" --generate-notes --title "$RELEASE" ||
+              gh release view "$RELEASE" --json id >/dev/null
           fi
+          gh release upload "$RELEASE" "dist/bwrap-$ARCH" --clobber
