@@ -37,15 +37,11 @@ jobs:
 
       - name: Check out
         env:
-          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || github.ref_name }}
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git init .
-          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
-          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
-          git -c "http.extraheader=AUTHORIZATION: basic $AUTH" \
-            fetch --depth=1 origin "$GITHUB_SHA"
-          git checkout --detach FETCH_HEAD
+          git clone --depth=1 --branch "$TAG" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" .
 
       - name: Build static bwrap
         env:
