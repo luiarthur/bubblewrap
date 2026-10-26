@@ -14,47 +14,60 @@ permissions:
 jobs:
   build:
     name: Build static bwrap for ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: alpine:3.23
+    defaults:
+      run:
+        shell: sh
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x86_64
-            platform: linux/amd64
+            runner: ubuntu-24.04
           - arch: aarch64
-            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
-      - name: Check out
-        uses: actions/checkout@v7
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build static bwrap image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: ${{ matrix.platform }}
-          load: true
-          tags: bwrap-static:${{ matrix.arch }}
-
-      - name: Extract binary
+      - name: Install dependencies
         run: |
+          apk add --no-cache \
+            build-base linux-headers python3 meson ninja \
+            pkgconf git libcap-dev libcap-static github-cli ca-certificates
+
+      - name: Check out
+        env:
+          TAG: ${{ github.event.release.tag_name || github.ref_name }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git clone --depth=1 --branch "$TAG" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" .
+
+      - name: Build static bwrap
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          meson setup build \
+            --buildtype=release \
+            -Dprefer_static=true \
+            -Dc_link_args=-static \
+            -Dselinux=disabled \
+            -Dman=disabled \
+            -Dbash_completion=disabled \
+            -Dzsh_completion=disabled \
+            -Dtests=false
+          meson compile -C build
           mkdir -p dist
-          docker run --rm bwrap-static:${{ matrix.arch }} cat /bwrap > dist/bwrap-${{ matrix.arch }}
-          chmod +x dist/bwrap-${{ matrix.arch }}
+          install -m 755 build/bwrap "dist/bwrap-$ARCH"
 
       - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ github.event.release.tag_name || github.ref_name }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          RELEASE="${{ github.event.release.tag_name || github.ref_name }}"
-          if gh release view "$RELEASE" --json id >/dev/null 2>&1; then
-            gh release upload "$RELEASE" dist/bwrap-${{ matrix.arch }} --clobber
-          else
-            gh release create "$RELEASE" dist/bwrap-${{ matrix.arch }} --generate-notes --title "$RELEASE"
+          if ! gh release view "$RELEASE" --json id >/dev/null 2>&1; then
+            gh release create "$RELEASE" --generate-notes --title "$RELEASE" ||
+              gh release view "$RELEASE" --json id >/dev/null
           fi
+          gh release upload "$RELEASE" "dist/bwrap-$ARCH" --clobber
