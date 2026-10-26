@@ -39,6 +39,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git init .
           git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
           AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
