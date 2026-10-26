@@ -32,8 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           apk add --no-cache \
-            build-base linux-headers python3 meson ninja \
-            pkgconf git libcap-dev libcap-static github-cli ca-certificates
+            gcc musl-dev meson libcap-dev libcap-static github-cli
 
       - name: Check out
         env:
