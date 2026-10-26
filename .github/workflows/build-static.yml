@@ -30,23 +30,31 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build static bwrap image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: ${{ matrix.platform }}
-          load: true
-          tags: bwrap-static:${{ matrix.arch }}
-
-      - name: Extract binary
+      - name: Build static bwrap
         run: |
           mkdir -p dist
-          docker run --rm bwrap-static:${{ matrix.arch }} cat /bwrap > dist/bwrap-${{ matrix.arch }}
-          chmod +x dist/bwrap-${{ matrix.arch }}
+          docker run --rm \
+            --platform "${{ matrix.platform }}" \
+            -v "$GITHUB_WORKSPACE:/src" \
+            -w /src \
+            alpine:3.23 sh -ec '
+              apk add --no-cache \
+                build-base linux-headers python3 meson ninja \
+                pkgconf git libcap-dev libcap-static
+
+              meson setup build \
+                --buildtype=release \
+                -Dprefer_static=true \
+                -Dc_link_args=-static \
+                -Dselinux=disabled \
+                -Dman=disabled \
+                -Dbash_completion=disabled \
+                -Dzsh_completion=disabled \
+                -Dtests=false
+
+              meson compile -C build
+              install -m 755 build/bwrap "dist/bwrap-${{ matrix.arch }}"
+            '
 
       - name: Upload to GitHub Release
         env:
